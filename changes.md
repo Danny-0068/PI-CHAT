@@ -1,9 +1,9 @@
 # Changes
 
 ## Summary (updated at end of every phase)
-- **Current phase:** Phase 4 — Realtime Chat Core (Completed, awaiting approval)
-- **Last updated:** 2026-10-13 09:44 IST (UTC+05:30)
-- **Total entries:** 6
+- **Current phase:** Phase 4 — Realtime Chat Core (Completed, pushed to GitHub)
+- **Last updated:** 2026-10-13 09:56 IST (UTC+05:30)
+- **Total entries:** 7
 - **Open follow-ups:** Await user review & approval to begin Phase 5 (UI shell: dual-panel polish, DM ordering by recent interaction, presence, status mode, unread + seen indicators, search).
 
 ---
@@ -204,6 +204,17 @@
 ---
 
 ## Ad-hoc
+
+### [2026-10-13 09:56 IST (UTC+05:30)] chore: initialize remote and push codebase through Phase 4 to GitHub
+- **Type:** chore
+- **Phase:** Ad-hoc
+- **What:** Configured remote `origin` pointing to `https://github.com/Danny-0068/PI-CHAT.git`, updated `.gitignore` with SQLite database patterns (`*.db`, `*.sqlite`, `*.sqlite3`), committed all tracked project assets spanning Phases 1 through 4, and pushed branch `main` to `origin/main`.
+- **Why:** Secure remote backup and repository synchronization as requested by user.
+- **Files:** `.gitignore`, `changes.md`
+- **DB / deps:** none
+- **Requested by:** Danny ("now add this project till phase-4 in github https://github.com/Danny-0068/PI-CHAT.git this is the link")
+- **How to verify:** Inspect repository at `https://github.com/Danny-0068/PI-CHAT` to confirm branch `main` is published with all project code and changes.md.
+- **Known gaps / follow-ups:** none
 
 ### [2026-10-13 09:44 IST (UTC+05:30)] feat: add one-click Windows batch launchers (start.bat and run.bat)
 - **Type:** feat
