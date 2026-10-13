@@ -22,6 +22,7 @@ interface AuthState {
   setAuth: (user: UserSummary, token: string) => void;
   setAccessToken: (token: string) => void;
   setUser: (user: UserSummary) => void;
+  updateStatus: (status: UserStatus, statusText?: string | null) => void;
   clearAuth: () => void;
   setLoading: (loading: boolean) => void;
 }
@@ -45,6 +46,17 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   setUser: (user: UserSummary) =>
     set({ user }),
+
+  updateStatus: (status: UserStatus, statusText?: string | null) =>
+    set((state) => ({
+      user: state.user
+        ? {
+            ...state.user,
+            status,
+            status_text: statusText !== undefined ? statusText : state.user.status_text,
+          }
+        : null,
+    })),
 
   clearAuth: () =>
     set({

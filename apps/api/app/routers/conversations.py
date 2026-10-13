@@ -15,6 +15,7 @@ from app.models.user import User, UserRole
 from app.schemas.chat import (
     ConversationSummaryResponse,
     CreateDMRequest,
+    MarkReadResponse,
     MessageCreateRequest,
     MessageEditRequest,
     MessageResponse,
@@ -45,6 +46,8 @@ def format_message_response(msg: Message) -> MessageResponse:
             display_name=msg.sender.display_name if msg.sender else "User",
             email=msg.sender.email if msg.sender else "",
             role=msg.sender.role.value if msg.sender else "EMPLOYEE",
+            status=msg.sender.status.value if msg.sender and hasattr(msg.sender, "status") and msg.sender.status else "AVAILABLE",
+            status_text=msg.sender.status_text if msg.sender else None,
         ),
         content=msg.content,
         is_edited=msg.is_edited,
@@ -118,12 +121,26 @@ async def list_conversations(
         )
         last_msg_res = await db.execute(last_msg_query)
         last_msg = last_msg_res.scalar_one_or_none()
+        # Fetch participant records for last_read_at
+        my_part_res = await db.execute(
+            select(ConversationParticipant).where(
+                ConversationParticipant.conversation_id == conv.id,
+                ConversationParticipant.user_id == current_user.id,
+            )
+        )
+        my_participant = my_part_res.scalar_one_or_none()
+        my_last_read_at = my_participant.last_read_at if my_participant else None
+
+        unread_count = await chat_service.get_conversation_unread_count(
+            db, conv.id, current_user, my_last_read_at
+        )
 
         title = "Conversation"
         slug = None
         color = None
         team_id = None
         other_user = None
+        other_user_last_read_at = None
 
         if conv.type == ConversationType.UPDATES:
             title = "#updates"
@@ -137,17 +154,26 @@ async def list_conversations(
                 team_id = team.id
         elif conv.type == ConversationType.DM:
             # Find the other participant
-            for p in conv.participants:
-                if p.user_id != current_user.id:
-                    other = p.user
-                    if other:
-                        title = other.display_name
-                        other_user = MessageSenderInfo(
-                            id=other.id,
-                            display_name=other.display_name,
-                            email=other.email,
-                            role=other.role.value,
-                        )
+            other_part_res = await db.execute(
+                select(ConversationParticipant).where(
+                    ConversationParticipant.conversation_id == conv.id,
+                    ConversationParticipant.user_id != current_user.id,
+                )
+            )
+            other_participant = other_part_res.scalar_one_or_none()
+            if other_participant:
+                other_user_last_read_at = other_participant.last_read_at
+                other = await db.get(User, other_participant.user_id)
+                if other:
+                    title = other.display_name
+                    other_user = MessageSenderInfo(
+                        id=other.id,
+                        display_name=other.display_name,
+                        email=other.email,
+                        role=other.role.value,
+                        status=other.status.value if hasattr(other, "status") and other.status else "AVAILABLE",
+                        status_text=other.status_text,
+                    )
             if not other_user:
                 title = "Direct Message"
 
@@ -161,8 +187,10 @@ async def list_conversations(
                 team_id=team_id,
                 other_user=other_user,
                 last_message=format_message_response(last_msg) if last_msg else None,
-                unread_count=0,
+                unread_count=unread_count,
                 updated_at=last_msg.created_at if last_msg else conv.created_at,
+                my_last_read_at=my_last_read_at,
+                other_user_last_read_at=other_user_last_read_at,
             )
         )
 
@@ -201,10 +229,14 @@ async def create_or_get_dm(
             display_name=target_user.display_name,
             email=target_user.email,
             role=target_user.role.value,
+            status=target_user.status.value if hasattr(target_user, "status") and target_user.status else "AVAILABLE",
+            status_text=target_user.status_text,
         ),
         last_message=None,
         unread_count=0,
         updated_at=conv.updated_at,
+        my_last_read_at=None,
+        other_user_last_read_at=None,
     )
 
 
@@ -278,3 +310,38 @@ async def delete_message_rest(
     formatted = format_message_response(msg)
     await sio.emit("message_deleted", serialize_message(msg), room=f"conv_{msg.conversation_id}")
     return formatted
+
+
+@router.post("/{conversation_id}/read", response_model=MarkReadResponse)
+async def mark_conversation_as_read(
+    conversation_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark all messages in a conversation as read by the current user."""
+    conv = await db.get(Conversation, conversation_id)
+    if not conv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+    has_access, _ = await chat_service.check_user_access(db, current_user, conv)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a participant in this conversation",
+        )
+
+    last_read_at = await chat_service.mark_conversation_read(db, conversation_id, current_user.id)
+    payload = {
+        "conversation_id": str(conversation_id),
+        "user_id": str(current_user.id),
+        "last_read_at": last_read_at.isoformat(),
+    }
+    await sio.emit("conversation_read", payload, room=f"conv_{conversation_id}")
+    return MarkReadResponse(
+        conversation_id=conversation_id,
+        user_id=current_user.id,
+        last_read_at=last_read_at,
+    )
+

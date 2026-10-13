@@ -302,3 +302,70 @@ async def typing_stop(sid: str, data: Dict[str, Any]):
             room=f"conv_{conv_id}",
             skip_sid=sid,
         )
+
+
+@sio.event
+async def mark_read(sid: str, data: Dict[str, Any]):
+    session = await sio.get_session(sid)
+    if not session:
+        return {"status": "error", "message": "Unauthorized"}
+    conv_id_str = data.get("conversation_id")
+    if not conv_id_str:
+        return {"status": "error", "message": "Missing conversation_id"}
+    try:
+        conv_id = uuid.UUID(conv_id_str)
+        user_id = uuid.UUID(session["user_id"])
+    except ValueError:
+        return {"status": "error", "message": "Invalid UUID format"}
+
+    async with async_session_maker() as db:
+        user = await db.get(User, user_id)
+        conv = await db.get(Conversation, conv_id)
+        if not user or not conv:
+            return {"status": "error", "message": "Not found"}
+        has_access, _ = await chat_service.check_user_access(db, user, conv)
+        if not has_access:
+            return {"status": "error", "message": "Access denied"}
+        last_read_at = await chat_service.mark_conversation_read(db, conv_id, user.id)
+        payload = {
+            "conversation_id": str(conv_id),
+            "user_id": str(user.id),
+            "last_read_at": last_read_at.isoformat(),
+        }
+        await sio.emit("conversation_read", payload, room=f"conv_{conv_id}")
+        return {"status": "ok", "last_read_at": last_read_at.isoformat()}
+
+
+@sio.event
+async def status_update(sid: str, data: Dict[str, Any]):
+    session = await sio.get_session(sid)
+    if not session:
+        return {"status": "error", "message": "Unauthorized"}
+    user_id_str = session.get("user_id")
+    new_status = data.get("status")
+    new_status_text = data.get("status_text")
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        return {"status": "error", "message": "Invalid UUID format"}
+
+    async with async_session_maker() as db:
+        user = await db.get(User, user_id)
+        if not user:
+            return {"status": "error", "message": "User not found"}
+        if new_status:
+            from app.models.user import UserStatus
+            try:
+                user.status = UserStatus(new_status)
+            except ValueError:
+                pass
+        if "status_text" in data:
+            user.status_text = new_status_text
+        await db.commit()
+        payload = {
+            "user_id": str(user.id),
+            "status": user.status.value,
+            "status_text": user.status_text,
+        }
+        await sio.emit("user_status_changed", payload)
+        return {"status": "ok", **payload}

@@ -2,8 +2,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from fastapi import HTTPException, status
-from sqlalchemy import select, and_, or_, desc
+from sqlalchemy import select, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from app.models.conversation import Conversation, ConversationType, ConversationParticipant
 from app.models.message import Message
@@ -261,3 +262,50 @@ async def delete_message(
     await db.commit()
     await db.refresh(msg)
     return msg
+
+
+async def mark_conversation_read(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> datetime:
+    """Update participant's last_read_at timestamp to now."""
+    now = datetime.now(timezone.utc)
+    query = select(ConversationParticipant).where(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.user_id == user_id,
+    )
+    res = await db.execute(query)
+    participant = res.scalar_one_or_none()
+    if participant:
+        participant.last_read_at = now
+    else:
+        participant = ConversationParticipant(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            last_read_at=now,
+        )
+        db.add(participant)
+    await db.commit()
+    return now
+
+
+async def get_conversation_unread_count(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    user: User,
+    last_read_at: Optional[datetime],
+) -> int:
+    """Count unread messages sent by others after user's last_read_at."""
+    conditions = [
+        Message.conversation_id == conversation_id,
+        Message.sender_id != user.id,
+        Message.is_deleted.is_(False),
+    ]
+    if last_read_at:
+        conditions.append(Message.created_at > last_read_at)
+
+    query = select(func.count(Message.id)).where(and_(*conditions))
+    res = await db.execute(query)
+    return res.scalar() or 0
+

@@ -10,6 +10,8 @@ class MessageSenderInfo(BaseModel):
     display_name: str
     email: str
     role: str
+    status: Optional[str] = "AVAILABLE"
+    status_text: Optional[str] = None
 
 
 class ReplySnippet(BaseModel):
@@ -52,7 +54,16 @@ class ConversationSummaryResponse(BaseModel):
     last_message: Optional[MessageResponse] = None
     unread_count: int = 0
     updated_at: datetime
+    my_last_read_at: Optional[datetime] = None
+    other_user_last_read_at: Optional[datetime] = None
 
 
 class CreateDMRequest(BaseModel):
     target_user_id: uuid.UUID
+
+
+class MarkReadResponse(BaseModel):
+    conversation_id: uuid.UUID
+    user_id: uuid.UUID
+    last_read_at: datetime
+

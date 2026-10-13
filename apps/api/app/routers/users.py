@@ -38,6 +38,8 @@ async def get_my_profile(
     return current_user
 
 
+from app.realtime.socket_manager import sio
+
 @router.patch("/me/status", response_model=UserResponse)
 async def update_my_status(
     payload: UserStatusUpdateRequest,
@@ -49,6 +51,15 @@ async def update_my_status(
     current_user.status_text = payload.status_text
     await db.commit()
     await db.refresh(current_user)
+
+    await sio.emit(
+        "user_status_changed",
+        {
+            "user_id": str(current_user.id),
+            "status": current_user.status.value,
+            "status_text": current_user.status_text,
+        },
+    )
     return current_user
 
 

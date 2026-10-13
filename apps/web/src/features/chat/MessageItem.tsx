@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useChatStore, ChatMessage } from '../../store/chatStore';
+import { Check, CheckCheck, Trash2, Edit2, CornerUpLeft } from 'lucide-react';
 
 interface MessageItemProps {
   message: ChatMessage;
@@ -11,6 +12,9 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   const setReplyingTo = useChatStore((s) => s.setReplyingTo);
   const editMessage = useChatStore((s) => s.editMessage);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
+  const activeConv = useChatStore((s) =>
+    s.conversations.find((c) => c.id === message.conversation_id)
+  );
 
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -19,6 +23,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   const isAdmin = currentUser?.role === 'MAIN_ADMIN';
   const canDelete = !message.is_deleted && (isOwn || isAdmin);
   const canEdit = !message.is_deleted && isOwn;
+
+  const isDM = activeConv?.type === 'DM';
+  const isReadByRecipient =
+    isOwn &&
+    isDM &&
+    Boolean(activeConv?.other_user_last_read_at) &&
+    new Date(activeConv!.other_user_last_read_at!).getTime() >=
+      new Date(message.created_at).getTime();
+
+  const isLatestMessage = activeConv?.last_message?.id === message.id;
 
   const handleSaveEdit = async () => {
     if (editContent.trim() && editContent !== message.content) {
@@ -61,7 +75,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
 
       {/* Message Body */}
       <div className="flex-1 min-w-0">
-        {/* Header (Sender Name, Role, Timestamp) */}
+        {/* Header (Sender Name, Role, Timestamp, Seen Receipts) */}
         <div className="flex items-baseline gap-2 mb-0.5">
           <span className="text-xs font-semibold text-content-primary">
             {message.sender.display_name}
@@ -74,6 +88,21 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
           <span className="text-[10px] text-content-muted font-mono">
             {formatTime(message.created_at)}
           </span>
+
+          {/* Read receipt checkmark for sender's messages */}
+          {isOwn && isDM && message.status !== 'sending' && message.status !== 'error' && (
+            <span
+              className="inline-flex items-center"
+              title={isReadByRecipient ? 'Seen by recipient' : 'Sent'}
+            >
+              {isReadByRecipient ? (
+                <CheckCheck className="w-3.5 h-3.5 text-accent" />
+              ) : (
+                <Check className="w-3.5 h-3.5 text-content-muted" />
+              )}
+            </span>
+          )}
+
           {message.is_edited && !message.is_deleted && (
             <span className="text-[10px] text-content-muted italic">(edited)</span>
           )}
@@ -98,9 +127,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
         {/* Content or Tombstone */}
         {message.is_deleted ? (
           <div className="flex items-center gap-1.5 text-xs text-content-muted italic py-0.5">
-            <svg className="w-3.5 h-3.5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
+            <Trash2 className="w-3.5 h-3.5 opacity-60" />
             <span>This message was deleted</span>
           </div>
         ) : isEditing ? (
@@ -139,6 +166,14 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
             {message.content}
           </p>
         )}
+
+        {/* Subtle "Seen" label under latest message in DM if read */}
+        {isOwn && isDM && isLatestMessage && isReadByRecipient && !message.is_deleted && (
+          <div className="flex items-center gap-1 mt-1 text-[10px] text-accent font-medium select-none">
+            <CheckCheck className="w-3 h-3 text-accent" />
+            <span>Seen</span>
+          </div>
+        )}
       </div>
 
       {/* Hover action toolbar */}
@@ -149,9 +184,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
             title="Reply"
             className="p-1 text-content-muted hover:text-content-primary hover:bg-floor rounded-md active:scale-[0.95] transition-all"
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-            </svg>
+            <CornerUpLeft className="w-3.5 h-3.5" />
           </button>
 
           {canEdit && (
@@ -160,9 +193,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
               title="Edit"
               className="p-1 text-content-muted hover:text-content-primary hover:bg-floor rounded-md active:scale-[0.95] transition-all"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
+              <Edit2 className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -172,9 +203,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
               title="Delete"
               className="p-1 text-content-muted hover:text-status-dnd hover:bg-status-dnd/10 rounded-md active:scale-[0.95] transition-all"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
@@ -182,4 +211,3 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
     </div>
   );
 };
-

@@ -1,10 +1,67 @@
 # Changes
 
 ## Summary (updated at end of every phase)
-- **Current phase:** Phase 4 — Realtime Chat Core (Completed, pushed to GitHub)
-- **Last updated:** 2026-10-13 09:56 IST (UTC+05:30)
-- **Total entries:** 7
-- **Open follow-ups:** Await user review & approval to begin Phase 5 (UI shell: dual-panel polish, DM ordering by recent interaction, presence, status mode, unread + seen indicators, search).
+- **Current phase:** Phase 5 — UI Shell, Presence & Dynamic Roster (Completed)
+- **Last updated:** 2026-10-13 10:24 IST (UTC+05:30)
+- **Total entries:** 8
+- **Open follow-ups:** Await user review & approval to begin Phase 6 (File Attachments, Thumbnails & Storage Cap).
+
+---
+
+## Phase 5 — UI Shell, Presence & Dynamic Roster
+
+### [2026-10-13 10:24 IST (UTC+05:30)] feat: implement dynamic roster ordering, read receipts & seen indicators, user presence mode & custom status text, and mobile drawer
+- **Type:** feat
+- **Phase:** Phase 5 — UI Shell, Presence & Dynamic Roster
+- **What:** Implemented the full UI Shell, Presence, and Dynamic Roster system across backend and frontend:
+  - **Dynamic Conversation Ordering**:
+    - `#updates` company-wide broadcast channel remains pinned at the top of the sidebar.
+    - All other channels and DMs are sorted in real-time by the timestamp of their most recent message or activity (`last_message.created_at || updated_at`).
+  - **Read Receipts & Unread Counters**:
+    - Backend participant tracking: `last_read_at` on `ConversationParticipant` updated via `POST /conversations/{id}/read` and WebSocket event `mark_read`.
+    - Real-time broadcast: Emits `conversation_read` payload (`conversation_id`, `user_id`, `last_read_at`) to conversation room `conv_{id}`.
+    - Unread counters: `unread_count` calculated server-side and updated optimistically in client `chatStore.ts`.
+    - Double checkmarks & Seen indicator: Outgoing messages in DMs display single checkmark (`✓`) when sent, double checkmark (`✓✓` in accent color) when read by recipient, and a subtle `"Seen"` indicator under the latest sent message bubble.
+  - **Presence Status & Custom Status Text**:
+    - Availability modes: `AVAILABLE` (Online), `AWAY` (Away), and `DND` (Do Not Disturb) persisted on `User` model and broadcasted via `user_status_changed`.
+    - Custom status text: Supports custom message text (up to 140 characters, e.g. "Deep focus mode until 2pm") synced across client lists, header previews, and tooltips.
+    - `StatusPopover.tsx`: Interactive popover component accessible from both user avatar (rail and session bar) and a 1-click "Status" button, featuring mode selectors, quick suggestions, character counter, and clear actions.
+  - **Unified Live Search & Embedded Teams Directory**:
+    - Panel 2 live search: In-place filtering across Channels, Teams, and Colleagues with matching count badges.
+    - Embedded Teams Directory: Collapsible accordion inside Panel 2 displaying all 5 department teams, active member counts, and 1-click direct message triggers.
+  - **Responsive Mobile Slide-Over Drawer**:
+    - Mobile navigation: Panel 2 adapts to a slide-over drawer with backdrop overlay on screens < 768px, triggered via a hamburger menu button in `ChatHeader.tsx`.
+  - **Backend Test Suite**:
+    - Added `tests/test_ui_shell_and_receipts.py` verifying read receipts, unread counter decrements, DM recipient read confirmation, and presence/status text updates (18 total backend tests passing in ~10s).
+- **Why:** Delivers §3.2 (Presence, Status mode, DM ordering by recent interaction, unread and seen indicators, search, 3-panel shell layout, and responsive mobile adaptation) per Masterprompt.md §8 Phase 5.
+- **Files:**
+  - `apps/api/app/schemas/chat.py`
+  - `apps/api/app/services/chat_service.py`
+  - `apps/api/app/routers/conversations.py`
+  - `apps/api/app/routers/users.py`
+  - `apps/api/app/realtime/socket_manager.py`
+  - `apps/api/tests/test_ui_shell_and_receipts.py`
+  - `apps/web/src/lib/socket.ts`
+  - `apps/web/src/store/authStore.ts`
+  - `apps/web/src/store/chatStore.ts`
+  - `apps/web/src/components/StatusPopover.tsx`
+  - `apps/web/src/features/chat/SidebarConversationsList.tsx`
+  - `apps/web/src/features/chat/MessageItem.tsx`
+  - `apps/web/src/features/chat/ChatHeader.tsx`
+  - `apps/web/src/features/chat/ChatArea.tsx`
+  - `apps/web/src/features/dashboard/DashboardShell.tsx`
+  - `changes.md`
+- **How to verify:**
+  - Backend tests: `cd apps/api && uv run pytest` (18 passed in 10.8s).
+  - Frontend build: `cd apps/web && npm run build` (built cleanly with 0 errors).
+  - Web UI:
+    - Click user avatar or "Status" button to change availability to Away / DND and set custom status text (e.g. "Focus mode").
+    - Observe status dot colors (emerald, amber, rose) and status message in session bar and chat header.
+    - Send messages in DMs; notice single check `✓` and double check `✓✓` / `Seen` indicator when read.
+    - Observe unread badges on conversations when receiving messages.
+    - Type into sidebar search to filter channels and colleague directory.
+    - Toggle mobile view (width < 768px) and tap hamburger button in chat header to open slide-over conversations drawer.
+- **Known gaps / follow-ups:** Ready for Phase 6 — File Attachments, Thumbnails & Storage Cap.
 
 ---
 

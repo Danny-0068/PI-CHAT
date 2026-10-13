@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { apiFetch } from '../lib/api';
 import { socketManager } from '../lib/socket';
-import { useAuthStore } from './authStore';
+import { useAuthStore, UserStatus } from './authStore';
 
 export type ConversationType = 'DM' | 'TEAM_GROUP' | 'UPDATES';
 
@@ -10,6 +10,8 @@ export interface MessageSender {
   display_name: string;
   email: string;
   role: string;
+  status?: string;
+  status_text?: string | null;
 }
 
 export interface ReplySnippet {
@@ -43,7 +45,22 @@ export interface ConversationItem {
   last_message: ChatMessage | null;
   unread_count: number;
   updated_at: string;
+  my_last_read_at?: string | null;
+  other_user_last_read_at?: string | null;
 }
+
+export const sortConversations = (convs: ConversationItem[]): ConversationItem[] => {
+  return [...convs].sort((a, b) => {
+    // #updates always pinned on top
+    if (a.type === 'UPDATES' && b.type !== 'UPDATES') return -1;
+    if (b.type === 'UPDATES' && a.type !== 'UPDATES') return 1;
+
+    // Dynamic chronological ordering by latest message / activity timestamp
+    const timeA = new Date(a.last_message?.created_at || a.updated_at).getTime();
+    const timeB = new Date(b.last_message?.created_at || b.updated_at).getTime();
+    return timeB - timeA;
+  });
+};
 
 interface ChatState {
   conversations: ConversationItem[];
@@ -65,6 +82,8 @@ interface ChatState {
   deleteMessage: (messageId: string) => Promise<void>;
   setReplyingTo: (msg: ChatMessage | null) => void;
   startDM: (targetUserId: string) => Promise<ConversationItem>;
+  markAsRead: (conversationId: string) => Promise<void>;
+  updateMyStatus: (status: UserStatus, statusText?: string | null) => Promise<void>;
 
   // Socket event listeners
   handleIncomingMessage: (msg: ChatMessage) => void;
@@ -73,6 +92,8 @@ interface ChatState {
   handleUserTyping: (conversationId: string, displayName: string) => void;
   handleUserStopTyping: (conversationId: string, userId: string) => void;
   handleUserPresence: (userId: string, status: string) => void;
+  handleConversationRead: (data: { conversation_id: string; user_id: string; last_read_at: string }) => void;
+  handleUserStatusChanged: (data: { user_id: string; status: string; status_text?: string | null }) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -93,6 +114,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       onUserTyping: (convId, displayName) => get().handleUserTyping(convId, displayName),
       onUserStopTyping: (convId, userId) => get().handleUserStopTyping(convId, userId),
       onUserPresence: (userId, status) => get().handleUserPresence(userId, status),
+      onConversationRead: (data) => get().handleConversationRead(data),
+      onUserStatusChanged: (data) => get().handleUserStatusChanged(data),
       onReconnect: () => {
         const activeId = get().activeConversationId;
         if (activeId) {
@@ -108,12 +131,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ isLoadingConversations: true });
     try {
       const data = await apiFetch<ConversationItem[]>('/conversations');
-      set({ conversations: data, isLoadingConversations: false });
+      const sorted = sortConversations(data);
+      set({ conversations: sorted, isLoadingConversations: false });
 
       // Automatically select the first conversation if none active
       const state = get();
-      if (!state.activeConversationId && data.length > 0) {
-        state.setActiveConversation(data[0].id);
+      if (!state.activeConversationId && sorted.length > 0) {
+        state.setActiveConversation(sorted[0].id);
       }
     } catch (err) {
       console.error('Failed to load conversations:', err);
@@ -129,7 +153,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({ activeConversationId: id, replyingTo: null });
     socketManager.joinConversation(id);
+    get().markAsRead(id);
     await get().fetchMessages(id);
+  },
+
+  markAsRead: async (conversationId: string) => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) return;
+    const now = new Date().toISOString();
+
+    // Optimistically update conversation
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId
+          ? { ...c, unread_count: 0, my_last_read_at: now }
+          : c
+      ),
+    }));
+
+    // Send via socket and REST fallback
+    socketManager.markRead(conversationId);
+    try {
+      await apiFetch(`/conversations/${conversationId}/read`, { method: 'POST' });
+    } catch {
+      // Handled via socket or silent
+    }
+  },
+
+  updateMyStatus: async (status: UserStatus, statusText?: string | null) => {
+    try {
+      useAuthStore.getState().updateStatus(status, statusText);
+      socketManager.emitStatusUpdate(status, statusText);
+      await apiFetch('/users/me/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status, status_text: statusText }),
+      });
+    } catch (err) {
+      console.error('Failed to update status:', err);
+    }
   },
 
   fetchMessages: async (conversationId: string) => {
@@ -167,6 +228,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         display_name: currentUser.display_name,
         email: currentUser.email,
         role: currentUser.role,
+        status: currentUser.status,
+        status_text: currentUser.status_text,
       },
       content,
       is_edited: false,
@@ -184,13 +247,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
 
     // Update state optimistically and clear replyingTo
-    set((state) => ({
-      replyingTo: null,
-      messages: {
-        ...state.messages,
-        [activeId]: [...(state.messages[activeId] || []), optimisticMessage],
-      },
-    }));
+    set((state) => {
+      const updatedConvs = state.conversations.map((c) =>
+        c.id === activeId
+          ? { ...c, last_message: optimisticMessage, updated_at: optimisticMessage.created_at }
+          : c
+      );
+      return {
+        replyingTo: null,
+        messages: {
+          ...state.messages,
+          [activeId]: [...(state.messages[activeId] || []), optimisticMessage],
+        },
+        conversations: sortConversations(updatedConvs),
+      };
+    });
 
     try {
       const socket = socketManager.getSocket();
@@ -285,7 +356,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return { activeConversationId: res.id };
       }
       return {
-        conversations: [...state.conversations, res],
+        conversations: sortConversations([...state.conversations, res]),
         activeConversationId: res.id,
       };
     });
@@ -295,9 +366,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   handleIncomingMessage: (msg: ChatMessage) => {
+    const currentUser = useAuthStore.getState().user;
+    const activeId = get().activeConversationId;
+    const isFromMe = currentUser && msg.sender.id === currentUser.id;
+
     set((state) => {
       const convMsgs = state.messages[msg.conversation_id] || [];
-      // Check if message is already present (by id or by client_id)
       const existingIdx = convMsgs.findIndex(
         (m) => m.id === msg.id || m.client_id === msg.client_id
       );
@@ -310,21 +384,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updatedMsgs = [...convMsgs, { ...msg, status: 'sent' }];
       }
 
-      // Update last_message in conversation list
-      const updatedConvs = state.conversations.map((c) =>
-        c.id === msg.conversation_id
-          ? { ...c, last_message: msg, updated_at: msg.created_at }
-          : c
-      );
+      // Update last_message and unread_count
+      const updatedConvs = state.conversations.map((c) => {
+        if (c.id === msg.conversation_id) {
+          const isCurrentlyActive = activeId === msg.conversation_id;
+          const newUnread = isCurrentlyActive || isFromMe ? 0 : (c.unread_count || 0) + 1;
+          return {
+            ...c,
+            last_message: msg,
+            updated_at: msg.created_at,
+            unread_count: newUnread,
+          };
+        }
+        return c;
+      });
 
       return {
         messages: {
           ...state.messages,
           [msg.conversation_id]: updatedMsgs,
         },
-        conversations: updatedConvs,
+        conversations: sortConversations(updatedConvs),
       };
     });
+
+    if (activeId === msg.conversation_id && !isFromMe) {
+      get().markAsRead(msg.conversation_id);
+    }
   },
 
   handleMessageUpdated: (msg: ChatMessage) => {
@@ -378,7 +464,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   handleUserStopTyping: (conversationId: string, _userId: string) => {
     set((state) => {
-      // Clear typing indicator for conversation
       return {
         typingUsers: {
           ...state.typingUsers,
@@ -398,5 +483,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return { onlineUserIds: Array.from(online) };
     });
+  },
+
+  handleConversationRead: (data: { conversation_id: string; user_id: string; last_read_at: string }) => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) return;
+
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (c.id !== data.conversation_id) return c;
+        if (data.user_id === currentUser.id) {
+          return { ...c, unread_count: 0, my_last_read_at: data.last_read_at };
+        } else {
+          return { ...c, other_user_last_read_at: data.last_read_at };
+        }
+      }),
+    }));
+  },
+
+  handleUserStatusChanged: (data: { user_id: string; status: string; status_text?: string | null }) => {
+    const currentUser = useAuthStore.getState().user;
+    if (currentUser && currentUser.id === data.user_id) {
+      useAuthStore.getState().updateStatus(data.status as UserStatus, data.status_text);
+    }
+
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (c.other_user?.id === data.user_id) {
+          return {
+            ...c,
+            other_user: {
+              ...c.other_user,
+              status: data.status,
+              status_text: data.status_text,
+            },
+          };
+        }
+        return c;
+      }),
+    }));
   },
 }));

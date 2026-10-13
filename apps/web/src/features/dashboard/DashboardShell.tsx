@@ -14,7 +14,8 @@ import {
   CheckCircle2, 
   AlertCircle, 
   Loader2, 
-  Shield
+  Shield,
+  Sparkles
 } from 'lucide-react';
 import { useAuthStore, UserStatus } from '../../store/authStore';
 import { useChatStore } from '../../store/chatStore';
@@ -24,11 +25,13 @@ import { TeamsAccordion } from '../../components/TeamsAccordion';
 import { AdminDrawer } from '../admin/AdminDrawer';
 import { SidebarConversationsList } from '../chat/SidebarConversationsList';
 import { ChatArea } from '../chat/ChatArea';
+import { StatusPopover } from '../../components/StatusPopover';
 
 export const DashboardShell: React.FC = () => {
-  const { user, clearAuth, setUser } = useAuthStore();
+  const { user, clearAuth } = useAuthStore();
   const fetchConversations = useChatStore((s) => s.fetchConversations);
   const startDM = useChatStore((s) => s.startDM);
+  const updateMyStatus = useChatStore((s) => s.updateMyStatus);
   const conversations = useChatStore((s) => s.conversations);
 
   const [activeRailTab, setActiveRailTab] = useState<'messages' | 'teams' | 'security'>('messages');
@@ -39,6 +42,8 @@ export const DashboardShell: React.FC = () => {
   const [statusLoading, setStatusLoading] = useState(false);
   const [isAdminDrawerOpen, setIsAdminDrawerOpen] = useState(false);
   const [adminDrawerTab, setAdminDrawerTab] = useState<'users' | 'teams' | 'audit'>('users');
+  const [isStatusPopoverOpen, setIsStatusPopoverOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
     fetchConversations();
@@ -63,11 +68,7 @@ export const DashboardShell: React.FC = () => {
   const handleStatusChange = async (newStatus: UserStatus) => {
     setStatusLoading(true);
     try {
-      const updated = await apiFetch<any>('/users/me/status', {
-        method: 'PATCH',
-        body: JSON.stringify({ status: newStatus, status_text: user.status_text }),
-      });
-      setUser(updated);
+      await updateMyStatus(newStatus, user.status_text);
     } catch (err) {
       console.error('Failed to update status', err);
     } finally {
@@ -237,8 +238,12 @@ export const DashboardShell: React.FC = () => {
         </button>
 
         {/* User Avatar with Presence Dot */}
-        <div className="mt-auto relative pt-2">
-          <div className="w-9 h-9 rounded-full bg-elevated border border-border flex items-center justify-center font-medium text-xs text-content-primary shadow-xs">
+        <div
+          onClick={() => setIsStatusPopoverOpen(true)}
+          className="mt-auto relative pt-2 cursor-pointer group"
+          title="Click to set presence & status"
+        >
+          <div className="w-9 h-9 rounded-full bg-elevated border border-border group-hover:border-accent flex items-center justify-center font-medium text-xs text-content-primary shadow-xs transition-colors">
             {user.display_name.split(' ').map(n => n[0]).join('')}
           </div>
           <span 
@@ -252,8 +257,12 @@ export const DashboardShell: React.FC = () => {
         {/* User Session Bar */}
         <div className="bg-panel border border-border rounded-xl p-3 md:px-4 md:py-3 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="w-9 h-9 rounded-full bg-elevated border border-border flex items-center justify-center font-semibold text-xs text-content-primary shadow-xs">
+            <div
+              onClick={() => setIsStatusPopoverOpen(true)}
+              className="relative cursor-pointer group"
+              title="Click to set presence & status"
+            >
+              <div className="w-9 h-9 rounded-full bg-elevated border border-border group-hover:border-accent flex items-center justify-center font-semibold text-xs text-content-primary shadow-xs transition-colors">
                 {user.display_name.split(' ').map(n => n[0]).join('')}
               </div>
               <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-panel ${getStatusColor(user.status)}`} />
@@ -276,7 +285,21 @@ export const DashboardShell: React.FC = () => {
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-content-secondary font-mono">{user.email}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-[11px] text-content-secondary font-mono">{user.email}</p>
+                {user.status_text && (
+                  <>
+                    <span className="text-content-muted text-[10px]">•</span>
+                    <span
+                      onClick={() => setIsStatusPopoverOpen(true)}
+                      className="text-[11px] text-accent font-medium italic truncate max-w-[220px] cursor-pointer hover:underline"
+                      title={user.status_text}
+                    >
+                      "{user.status_text}"
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -315,8 +338,8 @@ export const DashboardShell: React.FC = () => {
               </button>
             </div>
 
-            {/* Status Dropdown */}
-            <div className="flex items-center gap-1 text-xs bg-elevated border border-border rounded-lg p-1">
+            {/* Status Dropdown + Popover */}
+            <div className="relative flex items-center gap-1 text-xs bg-elevated border border-border rounded-lg p-1">
               {(['AVAILABLE', 'AWAY', 'DND'] as UserStatus[]).map((st) => (
                 <button
                   key={st}
@@ -332,6 +355,20 @@ export const DashboardShell: React.FC = () => {
                   <span>{st === 'AVAILABLE' ? 'Online' : st === 'AWAY' ? 'Away' : 'DND'}</span>
                 </button>
               ))}
+
+              <button
+                onClick={() => setIsStatusPopoverOpen(true)}
+                className="px-2 py-1 rounded text-[11px] font-medium text-accent hover:bg-accent-subtle flex items-center gap-1 transition-colors border border-transparent hover:border-accent/20"
+                title="Edit custom status message"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span className="hidden sm:inline">Status</span>
+              </button>
+
+              <StatusPopover
+                isOpen={isStatusPopoverOpen}
+                onClose={() => setIsStatusPopoverOpen(false)}
+              />
             </div>
 
             {user.role === 'MAIN_ADMIN' && (
@@ -360,9 +397,12 @@ export const DashboardShell: React.FC = () => {
 
         {/* View 1: Realtime Dual-Panel Chat Workspace (§3.1, §3.2) */}
         {activeRailTab === 'messages' && (
-          <div className="flex-1 flex overflow-hidden border border-border rounded-xl bg-panel shadow-xs min-h-[600px] h-[calc(100vh-10.5rem)]">
-            <SidebarConversationsList />
-            <ChatArea />
+          <div className="flex-1 flex overflow-hidden border border-border rounded-xl bg-panel shadow-xs min-h-[600px] h-[calc(100vh-10.5rem)] relative">
+            <SidebarConversationsList
+              isMobileOpen={isMobileSidebarOpen}
+              onCloseMobile={() => setIsMobileSidebarOpen(false)}
+            />
+            <ChatArea onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)} />
           </div>
         )}
 
