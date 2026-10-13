@@ -20,6 +20,13 @@ class ReplySnippet(BaseModel):
     content: str
 
 
+class ReactionSummary(BaseModel):
+    emoji: str
+    count: int
+    user_ids: List[uuid.UUID]
+    user_names: List[str]
+
+
 class MessageResponse(BaseModel):
     id: uuid.UUID
     client_id: str
@@ -29,6 +36,7 @@ class MessageResponse(BaseModel):
     is_edited: bool
     is_deleted: bool
     reply_to: Optional[ReplySnippet] = None
+    reactions: List[ReactionSummary] = []
     created_at: datetime
     updated_at: datetime
 
@@ -67,3 +75,14 @@ class MarkReadResponse(BaseModel):
     user_id: uuid.UUID
     last_read_at: datetime
 
+
+class ReactionToggleRequest(BaseModel):
+    emoji: str = Field(..., min_length=1, max_length=32)
+
+
+class ReactionToggleResponse(BaseModel):
+    message_id: uuid.UUID
+    conversation_id: uuid.UUID
+    emoji: str
+    action: str  # "added" | "removed"
+    reactions: List[ReactionSummary]

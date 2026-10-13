@@ -62,3 +62,4 @@ class Message(Base, TimestampMixin):
     conversation = relationship("Conversation", back_populates="messages")
     sender = relationship("User", lazy="selectin")
     reply_to = relationship("Message", remote_side=[id], lazy="selectin")
+    reactions = relationship("MessageReaction", back_populates="message", cascade="all, delete-orphan", lazy="selectin")

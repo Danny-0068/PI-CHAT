@@ -1,10 +1,61 @@
 # Changes
 
 ## Summary (updated at end of every phase)
-- **Current phase:** Phase 5 — UI Shell, Presence & Dynamic Roster (Completed)
-- **Last updated:** 2026-10-13 10:24 IST (UTC+05:30)
-- **Total entries:** 8
-- **Open follow-ups:** Await user review & approval to begin Phase 6 (File Attachments, Thumbnails & Storage Cap).
+- **Current phase:** Phase 6 — Replies & Reactions (Completed)
+- **Last updated:** 2026-10-13 10:57 IST (UTC+05:30)
+- **Total entries:** 9
+- **Open follow-ups:** Await user review & approval to begin Phase 7 (Files & Storage Cap).
+
+---
+
+## Phase 6 — Replies & Reactions
+
+### [2026-10-13 10:57 IST (UTC+05:30)] feat: implement quoted replies with jump-and-highlight and real-time emoji reactions system
+- **Type:** feat
+- **Phase:** Phase 6 — Replies & Reactions
+- **What:** Implemented the full Replies and Reactions system across backend and frontend per Masterprompt.md §3.1 & §8:
+  - **Quoted Replies System**:
+    - Self-referencing `reply_to_id` on `messages` table with eager loading via `selectinload(Message.reply_to).selectinload(Message.sender)`.
+    - Clickable quoted preview banner in `MessageItem.tsx`: clicking jumps directly to the quoted message via `scrollIntoView({ behavior: 'smooth', block: 'center' })` and triggers a distinctive accent highlight animation.
+  - **Emoji Reactions Data Model & Migrations**:
+    - `MessageReaction` SQLAlchemy model in `apps/api/app/models/reaction.py` with `UniqueConstraint("message_id", "user_id", "emoji")`.
+    - Alembic migration `2026_10_13_0004_create_message_reactions.py`.
+    - Cascade deletion: deleting a message automatically cleans up its associated reactions.
+  - **API Endpoints & Real-time Synchronization**:
+    - `POST /conversations/messages/{message_id}/reactions`: Toggles reaction for authenticated user and returns updated reaction summaries.
+    - Socket.IO handler `toggle_reaction`: broadcasts `message_reaction_toggled` to conversation room `conv_{id}` with updated emoji summaries (`emoji`, `count`, `user_ids`, `user_names`).
+    - Optimistic UI updates in `useChatStore`: immediate visual feedback with socket + HTTP resilience.
+  - **Rich Interactive UI in MessageItem**:
+    - Hover action toolbar: Includes Quick Emoji trigger with standard emojis (`👍`, `❤️`, `😂`, `🎉`, `🚀`, `👀`) plus expandable 18-emoji popover picker.
+    - Reaction Badges under messages: Displays emoji + count, active accent styling when reacted by current user, hover tooltip detailing reactor names ("You, Alice reacted with 👍"), and 1-click toggling.
+    - Quick add `+` pill button alongside reaction badges.
+  - **Automated Test Coverage**:
+    - Added `tests/test_reactions_and_replies.py` covering quote snippets, reaction toggling, counter increment/decrement, and multi-user reactivity.
+    - Verified all 19 backend tests passing in `uv run pytest`.
+    - Verified zero-error frontend build in `npm run build`.
+- **Why:** Satisfies Masterprompt.md §3.1 (Replies & Reactions) and §8 Phase 6 roadmap.
+- **Files:**
+  - `apps/api/alembic/versions/2026_10_13_0004_create_message_reactions.py`
+  - `apps/api/app/models/reaction.py`
+  - `apps/api/app/models/message.py`
+  - `apps/api/app/models/__init__.py`
+  - `apps/api/app/schemas/chat.py`
+  - `apps/api/app/services/chat_service.py`
+  - `apps/api/app/routers/conversations.py`
+  - `apps/api/app/realtime/socket_manager.py`
+  - `apps/api/tests/test_reactions_and_replies.py`
+  - `apps/api/tests/test_ui_shell_and_receipts.py`
+  - `apps/web/src/lib/socket.ts`
+  - `apps/web/src/store/chatStore.ts`
+  - `apps/web/src/features/chat/MessageItem.tsx`
+  - `changes.md`
+- **How to verify:**
+  - Backend tests: `cd apps/api && uv run pytest` (19 passed in ~12s).
+  - Frontend build: `cd apps/web && npm run build` (built cleanly with 0 errors).
+  - Web UI:
+    - Hover over any message and click the smile icon to react with an emoji.
+    - Click on reaction badges to toggle reactions.
+    - Click "Reply" on a message, type a reply, send it, then click the quoted preview in the resulting message to jump and highlight the original message.
 
 ---
 

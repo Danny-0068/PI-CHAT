@@ -7,6 +7,7 @@ from app.models.team_membership import TeamMembership
 from app.models.audit_log import AuditLog
 from app.models.conversation import Conversation, ConversationType, ConversationParticipant
 from app.models.message import Message
+from app.models.reaction import MessageReaction
 
 __all__ = [
     "Base",
@@ -22,4 +23,5 @@ __all__ = [
     "ConversationType",
     "ConversationParticipant",
     "Message",
+    "MessageReaction",
 ]

@@ -3,14 +3,17 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy import select, and_, or_, desc, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 from app.models.conversation import Conversation, ConversationType, ConversationParticipant
 from app.models.message import Message
+from app.models.reaction import MessageReaction
 from app.models.team import Team
 from app.models.team_membership import TeamMembership
 from app.models.user import User, UserRole
+from app.schemas.chat import ReactionSummary
 
 
 async def get_or_create_updates_channel(db: AsyncSession) -> Conversation:
@@ -152,7 +155,15 @@ async def get_conversation_messages(
             detail="You do not have permission to view messages in this conversation",
         )
 
-    query = select(Message).where(Message.conversation_id == conversation_id)
+    query = (
+        select(Message)
+        .options(
+            selectinload(Message.sender),
+            selectinload(Message.reply_to).selectinload(Message.sender),
+            selectinload(Message.reactions).selectinload(MessageReaction.user),
+        )
+        .where(Message.conversation_id == conversation_id)
+    )
 
     # Scoping rule for team groups (§3.1)
     if conv.type == ConversationType.TEAM_GROUP and user.role != UserRole.MAIN_ADMIN and membership:
@@ -180,7 +191,15 @@ async def create_message(
 ) -> Message:
     """Create message with client_id deduplication."""
     # Deduplication check
-    existing = await db.execute(select(Message).where(Message.client_id == client_id))
+    existing = await db.execute(
+        select(Message)
+        .options(
+            selectinload(Message.sender),
+            selectinload(Message.reply_to).selectinload(Message.sender),
+            selectinload(Message.reactions).selectinload(MessageReaction.user),
+        )
+        .where(Message.client_id == client_id)
+    )
     found = existing.scalar_one_or_none()
     if found:
         return found
@@ -216,8 +235,17 @@ async def create_message(
     )
     db.add(msg)
     await db.commit()
-    await db.refresh(msg)
-    return msg
+
+    loaded = await db.execute(
+        select(Message)
+        .options(
+            selectinload(Message.sender),
+            selectinload(Message.reply_to).selectinload(Message.sender),
+            selectinload(Message.reactions).selectinload(MessageReaction.user),
+        )
+        .where(Message.id == msg.id)
+    )
+    return loaded.scalar_one()
 
 
 async def edit_message(
@@ -240,8 +268,17 @@ async def edit_message(
     msg.content = new_content.strip()
     msg.is_edited = True
     await db.commit()
-    await db.refresh(msg)
-    return msg
+
+    loaded = await db.execute(
+        select(Message)
+        .options(
+            selectinload(Message.sender),
+            selectinload(Message.reply_to).selectinload(Message.sender),
+            selectinload(Message.reactions).selectinload(MessageReaction.user),
+        )
+        .where(Message.id == message_id)
+    )
+    return loaded.scalar_one()
 
 
 async def delete_message(
@@ -260,8 +297,17 @@ async def delete_message(
     msg.is_deleted = True
     msg.content = "This message was deleted"
     await db.commit()
-    await db.refresh(msg)
-    return msg
+
+    loaded = await db.execute(
+        select(Message)
+        .options(
+            selectinload(Message.sender),
+            selectinload(Message.reply_to).selectinload(Message.sender),
+            selectinload(Message.reactions).selectinload(MessageReaction.user),
+        )
+        .where(Message.id == message_id)
+    )
+    return loaded.scalar_one()
 
 
 async def mark_conversation_read(
@@ -308,4 +354,92 @@ async def get_conversation_unread_count(
     query = select(func.count(Message.id)).where(and_(*conditions))
     res = await db.execute(query)
     return res.scalar() or 0
+
+
+async def get_message_reactions_summary(
+    db: AsyncSession,
+    message_id: uuid.UUID,
+) -> List[ReactionSummary]:
+    """Retrieve aggregated reaction statistics for a message."""
+    query = (
+        select(MessageReaction)
+        .where(MessageReaction.message_id == message_id)
+        .order_by(MessageReaction.created_at)
+    )
+    res = await db.execute(query)
+    reactions = res.scalars().all()
+
+    grouped: dict[str, dict] = {}
+    for r in reactions:
+        if r.emoji not in grouped:
+            grouped[r.emoji] = {"count": 0, "user_ids": [], "user_names": []}
+        grouped[r.emoji]["count"] += 1
+        grouped[r.emoji]["user_ids"].append(r.user_id)
+        user_name = r.user.display_name if r.user else "User"
+        grouped[r.emoji]["user_names"].append(user_name)
+
+    return [
+        ReactionSummary(
+            emoji=emoji,
+            count=data["count"],
+            user_ids=data["user_ids"],
+            user_names=data["user_names"],
+        )
+        for emoji, data in grouped.items()
+    ]
+
+
+async def toggle_message_reaction(
+    db: AsyncSession,
+    message_id: uuid.UUID,
+    user: User,
+    emoji: str,
+) -> Tuple[str, Message, List[ReactionSummary]]:
+    """
+    Toggle emoji reaction on a message.
+    If the reaction already exists for this user, it is removed; otherwise, it is added.
+    Returns (action, message, updated_reactions_summary).
+    """
+    msg = await db.get(Message, message_id)
+    if not msg:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
+    if msg.is_deleted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot react to a deleted message")
+
+    conv = await db.get(Conversation, msg.conversation_id)
+    if not conv:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+
+    has_access, _ = await check_user_access(db, user, conv)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to conversation")
+
+    clean_emoji = emoji.strip()
+    if not clean_emoji:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Emoji cannot be empty")
+
+    query = select(MessageReaction).where(
+        MessageReaction.message_id == message_id,
+        MessageReaction.user_id == user.id,
+        MessageReaction.emoji == clean_emoji,
+    )
+    existing_res = await db.execute(query)
+    existing_reaction = existing_res.scalar_one_or_none()
+
+    if existing_reaction:
+        await db.delete(existing_reaction)
+        action = "removed"
+    else:
+        new_reaction = MessageReaction(
+            message_id=message_id,
+            user_id=user.id,
+            emoji=clean_emoji,
+        )
+        db.add(new_reaction)
+        action = "added"
+
+    await db.commit()
+    summary = await get_message_reactions_summary(db, message_id)
+    return action, msg, summary
 

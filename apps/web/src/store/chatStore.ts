@@ -20,6 +20,13 @@ export interface ReplySnippet {
   content: string;
 }
 
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  user_ids: string[];
+  user_names: string[];
+}
+
 export interface ChatMessage {
   id: string;
   client_id: string;
@@ -29,6 +36,7 @@ export interface ChatMessage {
   is_edited: boolean;
   is_deleted: boolean;
   reply_to: ReplySnippet | null;
+  reactions?: ReactionSummary[];
   created_at: string;
   updated_at: string;
   status?: 'sending' | 'sent' | 'error';
@@ -71,6 +79,7 @@ interface ChatState {
   typingUsers: Record<string, string[]>; // conversationId -> user display names
   onlineUserIds: string[];
   replyingTo: ChatMessage | null;
+  highlightedMessageId: string | null;
 
   // Actions
   initRealtime: () => void;
@@ -81,9 +90,11 @@ interface ChatState {
   editMessage: (messageId: string, content: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   setReplyingTo: (msg: ChatMessage | null) => void;
+  setHighlightedMessageId: (id: string | null) => void;
   startDM: (targetUserId: string) => Promise<ConversationItem>;
   markAsRead: (conversationId: string) => Promise<void>;
   updateMyStatus: (status: UserStatus, statusText?: string | null) => Promise<void>;
+  toggleReaction: (messageId: string, emoji: string) => Promise<void>;
 
   // Socket event listeners
   handleIncomingMessage: (msg: ChatMessage) => void;
@@ -94,6 +105,7 @@ interface ChatState {
   handleUserPresence: (userId: string, status: string) => void;
   handleConversationRead: (data: { conversation_id: string; user_id: string; last_read_at: string }) => void;
   handleUserStatusChanged: (data: { user_id: string; status: string; status_text?: string | null }) => void;
+  handleMessageReactionToggled: (data: { message_id: string; conversation_id: string; reactions: ReactionSummary[] }) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -105,6 +117,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   typingUsers: {},
   onlineUserIds: [],
   replyingTo: null,
+  highlightedMessageId: null,
 
   initRealtime: () => {
     socketManager.setHandlers({
@@ -116,6 +129,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       onUserPresence: (userId, status) => get().handleUserPresence(userId, status),
       onConversationRead: (data) => get().handleConversationRead(data),
       onUserStatusChanged: (data) => get().handleUserStatusChanged(data),
+      onMessageReactionToggled: (data) => get().handleMessageReactionToggled(data),
       onReconnect: () => {
         const activeId = get().activeConversationId;
         if (activeId) {
@@ -124,6 +138,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
     });
     socketManager.connect();
+  },
+
+  setHighlightedMessageId: (id: string | null) => {
+    set({ highlightedMessageId: id });
+    if (id) {
+      setTimeout(() => {
+        if (get().highlightedMessageId === id) {
+          set({ highlightedMessageId: null });
+        }
+      }, 2000);
+    }
   },
 
   fetchConversations: async () => {
@@ -241,6 +266,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             content: replyingTo.content.slice(0, 100),
           }
         : null,
+      reactions: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       status: 'sending',
@@ -365,6 +391,84 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return res;
   },
 
+  toggleReaction: async (messageId: string, emoji: string) => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) return;
+
+    // Optimistic toggle
+    set((state) => {
+      const activeId = state.activeConversationId;
+      if (!activeId || !state.messages[activeId]) return state;
+
+      const msgs = state.messages[activeId].map((m) => {
+        if (m.id !== messageId) return m;
+        const currentReactions = m.reactions || [];
+        const existingIdx = currentReactions.findIndex((r) => r.emoji === emoji);
+
+        let newReactions: ReactionSummary[];
+        if (existingIdx >= 0) {
+          const current = currentReactions[existingIdx];
+          const hasUser = current.user_ids.includes(currentUser.id);
+          if (hasUser) {
+            if (current.count <= 1) {
+              newReactions = currentReactions.filter((r) => r.emoji !== emoji);
+            } else {
+              newReactions = currentReactions.map((r, i) =>
+                i === existingIdx
+                  ? {
+                      ...r,
+                      count: r.count - 1,
+                      user_ids: r.user_ids.filter((id) => id !== currentUser.id),
+                      user_names: r.user_names.filter((name) => name !== currentUser.display_name),
+                    }
+                  : r
+              );
+            }
+          } else {
+            newReactions = currentReactions.map((r, i) =>
+              i === existingIdx
+                ? {
+                    ...r,
+                    count: r.count + 1,
+                    user_ids: [...r.user_ids, currentUser.id],
+                    user_names: [...r.user_names, currentUser.display_name],
+                  }
+                : r
+            );
+          }
+        } else {
+          newReactions = [
+            ...currentReactions,
+            {
+              emoji,
+              count: 1,
+              user_ids: [currentUser.id],
+              user_names: [currentUser.display_name],
+            },
+          ];
+        }
+        return { ...m, reactions: newReactions };
+      });
+
+      return {
+        messages: {
+          ...state.messages,
+          [activeId]: msgs,
+        },
+      };
+    });
+
+    socketManager.toggleReaction(messageId, emoji);
+    try {
+      await apiFetch(`/conversations/messages/${messageId}/reactions`, {
+        method: 'POST',
+        body: JSON.stringify({ emoji }),
+      });
+    } catch {
+      // Handled via socket
+    }
+  },
+
   handleIncomingMessage: (msg: ChatMessage) => {
     const currentUser = useAuthStore.getState().user;
     const activeId = get().activeConversationId;
@@ -439,6 +543,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   ...m,
                   is_deleted: true,
                   content: 'This message was deleted',
+                  reactions: [],
                 }
               : m
           ),
@@ -522,5 +627,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return c;
       }),
     }));
+  },
+
+  handleMessageReactionToggled: (data: { message_id: string; conversation_id: string; reactions: ReactionSummary[] }) => {
+    set((state) => {
+      const convMsgs = state.messages[data.conversation_id] || [];
+      return {
+        messages: {
+          ...state.messages,
+          [data.conversation_id]: convMsgs.map((m) =>
+            m.id === data.message_id ? { ...m, reactions: data.reactions } : m
+          ),
+        },
+      };
+    });
   },
 }));

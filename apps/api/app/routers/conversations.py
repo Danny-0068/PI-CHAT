@@ -20,12 +20,37 @@ from app.schemas.chat import (
     MessageEditRequest,
     MessageResponse,
     MessageSenderInfo,
+    ReactionSummary,
+    ReactionToggleRequest,
+    ReactionToggleResponse,
     ReplySnippet,
 )
 from app.services import chat_service
 from app.realtime.socket_manager import sio, serialize_message
 
 router = APIRouter(prefix="/conversations", tags=["Conversations & Chat"])
+
+
+def format_reactions_summary(reactions) -> List[ReactionSummary]:
+    if not reactions:
+        return []
+    grouped: dict[str, dict] = {}
+    for r in reactions:
+        if r.emoji not in grouped:
+            grouped[r.emoji] = {"count": 0, "user_ids": [], "user_names": []}
+        grouped[r.emoji]["count"] += 1
+        grouped[r.emoji]["user_ids"].append(r.user_id)
+        user_name = r.user.display_name if r.user else "User"
+        grouped[r.emoji]["user_names"].append(user_name)
+    return [
+        ReactionSummary(
+            emoji=emoji,
+            count=data["count"],
+            user_ids=data["user_ids"],
+            user_names=data["user_names"],
+        )
+        for emoji, data in grouped.items()
+    ]
 
 
 def format_message_response(msg: Message) -> MessageResponse:
@@ -36,6 +61,8 @@ def format_message_response(msg: Message) -> MessageResponse:
             sender_name=msg.reply_to.sender.display_name if msg.reply_to.sender else "User",
             content=msg.reply_to.content[:100],
         )
+
+    reactions = format_reactions_summary(getattr(msg, "reactions", []))
 
     return MessageResponse(
         id=msg.id,
@@ -53,6 +80,7 @@ def format_message_response(msg: Message) -> MessageResponse:
         is_edited=msg.is_edited,
         is_deleted=msg.is_deleted,
         reply_to=reply_snippet,
+        reactions=reactions,
         created_at=msg.created_at,
         updated_at=msg.updated_at,
     )
@@ -343,5 +371,48 @@ async def mark_conversation_as_read(
         conversation_id=conversation_id,
         user_id=current_user.id,
         last_read_at=last_read_at,
+    )
+
+
+@router.post("/messages/{message_id}/reactions", response_model=ReactionToggleResponse)
+async def toggle_reaction_rest(
+    message_id: uuid.UUID,
+    payload: ReactionToggleRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle an emoji reaction on a message (Slack/Discord style)."""
+    action, msg, reactions = await chat_service.toggle_message_reaction(
+        db=db,
+        message_id=message_id,
+        user=current_user,
+        emoji=payload.emoji,
+    )
+
+    socket_payload = {
+        "message_id": str(message_id),
+        "conversation_id": str(msg.conversation_id),
+        "user_id": str(current_user.id),
+        "user_name": current_user.display_name,
+        "emoji": payload.emoji,
+        "action": action,
+        "reactions": [
+            {
+                "emoji": r.emoji,
+                "count": r.count,
+                "user_ids": [str(uid) for uid in r.user_ids],
+                "user_names": r.user_names,
+            }
+            for r in reactions
+        ],
+    }
+    await sio.emit("message_reaction_toggled", socket_payload, room=f"conv_{msg.conversation_id}")
+
+    return ReactionToggleResponse(
+        message_id=message_id,
+        conversation_id=msg.conversation_id,
+        emoji=payload.emoji,
+        action=action,
+        reactions=reactions,
     )
 

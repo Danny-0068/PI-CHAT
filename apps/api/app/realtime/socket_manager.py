@@ -34,6 +34,26 @@ def serialize_message(msg: Message) -> Dict[str, Any]:
             "content": msg.reply_to.content[:100],
         }
 
+    reactions_data = []
+    if hasattr(msg, "reactions") and msg.reactions:
+        grouped: dict[str, dict] = {}
+        for r in msg.reactions:
+            if r.emoji not in grouped:
+                grouped[r.emoji] = {"count": 0, "user_ids": [], "user_names": []}
+            grouped[r.emoji]["count"] += 1
+            grouped[r.emoji]["user_ids"].append(str(r.user_id))
+            user_name = r.user.display_name if r.user else "User"
+            grouped[r.emoji]["user_names"].append(user_name)
+        reactions_data = [
+            {
+                "emoji": emoji,
+                "count": data["count"],
+                "user_ids": data["user_ids"],
+                "user_names": data["user_names"],
+            }
+            for emoji, data in grouped.items()
+        ]
+
     return {
         "id": str(msg.id),
         "client_id": msg.client_id,
@@ -48,6 +68,7 @@ def serialize_message(msg: Message) -> Dict[str, Any]:
         "is_edited": msg.is_edited,
         "is_deleted": msg.is_deleted,
         "reply_to": reply_snippet,
+        "reactions": reactions_data,
         "created_at": msg.created_at.isoformat(),
         "updated_at": msg.updated_at.isoformat(),
     }
@@ -369,3 +390,53 @@ async def status_update(sid: str, data: Dict[str, Any]):
         }
         await sio.emit("user_status_changed", payload)
         return {"status": "ok", **payload}
+
+
+@sio.event
+async def toggle_reaction(sid: str, data: Dict[str, Any]):
+    session = await sio.get_session(sid)
+    if not session:
+        return {"status": "error", "message": "Unauthorized"}
+    msg_id_str = data.get("message_id")
+    emoji = data.get("emoji")
+    if not msg_id_str or not emoji:
+        return {"status": "error", "message": "Missing message_id or emoji"}
+    try:
+        msg_id = uuid.UUID(msg_id_str)
+        user_id = uuid.UUID(session["user_id"])
+    except ValueError:
+        return {"status": "error", "message": "Invalid UUID format"}
+
+    async with async_session_maker() as db:
+        user = await db.get(User, user_id)
+        if not user:
+            return {"status": "error", "message": "User not found"}
+        try:
+            action, msg, reactions = await chat_service.toggle_message_reaction(
+                db=db,
+                message_id=msg_id,
+                user=user,
+                emoji=emoji,
+            )
+            reactions_list = [
+                {
+                    "emoji": r.emoji,
+                    "count": r.count,
+                    "user_ids": [str(uid) for uid in r.user_ids],
+                    "user_names": r.user_names,
+                }
+                for r in reactions
+            ]
+            payload = {
+                "message_id": str(msg_id),
+                "conversation_id": str(msg.conversation_id),
+                "user_id": str(user.id),
+                "user_name": user.display_name,
+                "emoji": emoji,
+                "action": action,
+                "reactions": reactions_list,
+            }
+            await sio.emit("message_reaction_toggled", payload, room=f"conv_{msg.conversation_id}")
+            return {"status": "ok", **payload}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}

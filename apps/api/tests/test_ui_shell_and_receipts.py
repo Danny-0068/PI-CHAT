@@ -98,8 +98,8 @@ async def test_read_receipts_and_unread_counts():
         alice_dm_after = next(c for c in alice_convs_after.json() if c["id"] == conv_id)
         assert alice_dm_after["other_user_last_read_at"] is not None
         # Bob's last_read_at should be >= created_at of msg2
-        bob_read_ts = datetime.fromisoformat(alice_dm_after["other_user_last_read_at"])
-        msg2_ts = datetime.fromisoformat(msg2["created_at"])
+        bob_read_ts = datetime.fromisoformat(alice_dm_after["other_user_last_read_at"]).replace(tzinfo=timezone.utc)
+        msg2_ts = datetime.fromisoformat(msg2["created_at"]).replace(tzinfo=timezone.utc)
         assert bob_read_ts >= msg2_ts
 
 
