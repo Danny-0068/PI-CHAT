@@ -1,0 +1,38 @@
+[project]
+name = "relay-api"
+version = "0.1.0"
+description = "FastAPI backend for Relay team chat"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic[email]>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.0",
+    "python-dotenv>=1.0.1",
+    "psycopg2-binary>=2.9.9",
+    "argon2-cffi>=23.1.0",
+    "pyjwt>=2.9.0",
+    "slowapi>=0.1.9",
+    "email-validator>=2.2.0",
+    "python-socketio>=5.11.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+    "ruff>=0.7.0",
+    "aiosqlite>=0.20.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: relay_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-relay_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-relay_password}
+      POSTGRES_DB: ${POSTGRES_DB:-relay_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - relay_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-relay_user} -d ${POSTGRES_DB:-relay_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: relay_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: Relay
+      ENV: development
+      PORT: 8000
+      DEBUG: "true"
+      SECRET_KEY: ${SECRET_KEY:-demo_dev_secret_key_change_in_production_min_32_chars}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-relay_user}:${POSTGRES_PASSWORD:-relay_password}@postgres:5432/${POSTGRES_DB:-relay_db}
+      CORS_ORIGINS: "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: relay_web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - api
+
+volumes:
+  relay_postgres_data:

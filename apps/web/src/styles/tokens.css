@@ -1,0 +1,51 @@
+:root {
+  /* Surface Depth Ladder - Light Mode */
+  --bg-floor: #f4f4f5;       /* zinc-100 base canvas */
+  --bg-panel: #ffffff;       /* zinc-0 / white panel */
+  --bg-elevated: #ffffff;    /* elevated cards / popovers */
+
+  /* Text Hierarchy - Light Mode */
+  --text-primary: #09090b;   /* zinc-950 */
+  --text-secondary: #52525b; /* zinc-600 */
+  --text-muted: #71717a;     /* zinc-500 */
+
+  /* Borders - Light Mode */
+  --border-subtle: #f4f4f5;  /* zinc-100 */
+  --border-default: #e4e4e7; /* zinc-200 */
+
+  /* Functional Accent (Muted Navy) */
+  --accent: #1e3a8a;         /* blue-900 / navy */
+  --accent-hover: #172554;   /* blue-950 */
+  --accent-subtle: #dbeafe;  /* blue-100 */
+
+  /* Status Colors (Saturated functional accents) */
+  --status-available: #16a34a; /* green-600 */
+  --status-away: #d97706;      /* amber-600 */
+  --status-dnd: #dc2626;       /* red-600 */
+}
+
+.dark {
+  /* Surface Depth Ladder - Dark Mode (3-step ladder) */
+  --bg-floor: #09090b;       /* zinc-950 deepest floor */
+  --bg-panel: #141416;       /* mid-level panel */
+  --bg-elevated: #1f1f23;    /* elevated cards / active rows */
+
+  /* Text Hierarchy - Dark Mode */
+  --text-primary: #fafafa;   /* zinc-50 */
+  --text-secondary: #a1a1aa; /* zinc-400 */
+  --text-muted: #71717a;     /* zinc-500 */
+
+  /* Borders - Dark Mode */
+  --border-subtle: #1c1c21;
+  --border-default: #27272a; /* zinc-800 */
+
+  /* Functional Accent (Muted Navy in Dark Mode) */
+  --accent: #3b82f6;         /* blue-500 */
+  --accent-hover: #60a5fa;   /* blue-400 */
+  --accent-subtle: #1e293b;  /* slate-800 */
+
+  /* Status Colors */
+  --status-available: #22c55e; /* green-500 */
+  --status-away: #f59e0b;      /* amber-500 */
+  --status-dnd: #ef4444;       /* red-500 */
+}
